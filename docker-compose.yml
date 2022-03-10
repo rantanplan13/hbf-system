@@ -1,0 +1,187 @@
+version: '3.6'
+services:
+  imageserver:
+    build:
+      context: ../hbf-image
+    ports:
+      - 8083:8082
+      - 8000:5005
+    links:
+      - "graphql-engine:hasura"
+      - "thumbor:thumbor"
+    expose:
+      - 8083
+      - 8000
+    environment:
+      THUMBOR_URL: http://thumbor:80/image
+      HASURA_URL: http://hasura:8080/v1/graphql
+      THUMBOR_HOST: http://thumbor:80
+      HASURA_SECRET: "secret"
+      THUMBOR_URL_EXTERNAL: http://localhost:8001
+      JAVA_TOOL_OPTIONS: -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+  registration:
+   # image: rantanplan13/hbf-registration:latest
+    build:
+      context: ../hbf-registration
+    ports:
+      - 8085:9299
+      - 8086:5015
+    expose:
+      - 8085
+      - 8086
+    links:
+      - postgres
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/postgres
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      JAVA_TOOL_OPTIONS: -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5015
+  buddy:
+    build:
+      context: ../hbf-hasura
+    depends_on:
+      - graphql-engine
+    environment:
+      HASURA_GRAPHQL_ADMIN_SECRET: "secret"
+      HASURA_GRAPHQL_DATABASE: "default"
+      DELAY: 10
+      DELAY_FOR_HASURA: 120
+      HASURA_GRAPHQL_CLIENT_URL: "http://graphql-engine:8080"
+    links:
+      - graphql-engine:graphql-engine
+  nginx:
+    image: nginx:1.21.3
+    ports:
+     - "8088:80"
+    volumes: 
+     - ./images:/usr/share/nginx/html/images
+    environment:
+     - NGINX_HOST=buddy.com
+     - NGINX_PORT=80
+  postgres:
+    image: kartoza/postgis:13-3.1
+    restart: always
+    ports:
+      - "5432:5432"
+    volumes:
+    - db_data:/var/lib/postgresql/data
+    - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    environment:
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      REPLICATION: true
+      WAL_LEVEL: logical
+      EXTRA_CONF: "max_replication_slots = 1"
+  pgadmin:
+    image: dpage/pgadmin4:6.0
+    restart: unless-stopped
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+       - pgadmin:/root/.pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-pgadmin4@pgadmin.org}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      PGADMIN_DISABLE_POSTFIX: "true"
+    networks:
+      - default
+  keycloak:
+    image: jboss/keycloak:15.0.2
+    depends_on:
+      - postgres
+    ports:
+      - "80:8080"
+    volumes:
+      - ./hbf-realm.json:/opt/jboss/keycloak/imports/hbf-realm.json
+    environment:
+      DB_VENDOR: postgres
+      DB_ADDR: postgres
+      DB_DATABASE: postgres
+      DB_SCHEMA: keycloak
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      KEYCLOAK_USER: admin
+      KEYCLOAK_PASSWORD: password
+      KEYCLOAK_IMPORT: /opt/jboss/keycloak/imports/hbf-realm.json
+  graphql-engine:
+    image: hasura/graphql-engine:v2.0.9
+    restart: always
+    depends_on:
+    - postgres
+    - keycloak
+    ports:
+    - "8080:8080"
+    environment:
+      HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
+      HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
+      # enable the console served by server
+      HASURA_GRAPHQL_ENABLE_CONSOLE: "true" # set to "false" to disable console
+      # enable debugging mode. It is recommended to disable this in production
+      HASURA_GRAPHQL_DEV_MODE: "true"
+      HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
+      HASURA_GRAPHQL_ENABLE_TELEMETRY: "false"
+      # uncomment next line to set an admin secret
+      HASURA_GRAPHQL_ADMIN_SECRET: "secret"
+      HASURA_GRAPHQL_JWT_SECRET: '{ "type": "RS256", "jwk_url": "http://keycloak:8080/auth/realms/hbf/protocol/openid-connect/certs" }'
+  elasticsearch:
+    image: elasticsearch:7.16.3
+    ports:
+    - "9200:9200"
+    - "9300:9300"
+    environment:
+      "discovery.type": single-node
+  kibana:
+    image: kibana:7.16.3
+    depends_on:
+    - elasticsearch
+    ports:
+    - "5601:5601"
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+  redis:
+    image: redis:6.2
+    command: redis-server --requirepass redis
+  pgsync:
+    build:
+      context: ../hbf-pgsync
+      dockerfile: Dockerfile
+    command: ./runserver.sh
+    restart: always
+    sysctls:
+      - net.ipv4.tcp_keepalive_time=200
+      - net.ipv4.tcp_keepalive_intvl=200
+      - net.ipv4.tcp_keepalive_probes=5
+    depends_on:
+      - buddy
+      - postgres
+      - redis
+      - elasticsearch
+      - graphql-engine
+    environment:
+      - PG_USER=postgres
+      - PG_HOST=postgres
+      - PG_PASSWORD=postgres
+      - LOG_LEVEL=INFO
+      - ELASTICSEARCH_PORT=9200
+      - ELASTICSEARCH_SCHEME=http
+      - ELASTICSEARCH_HOST=elasticsearch
+      - REDIS_HOST=redis
+      - REDIS_AUTH=redis
+  thumbor:
+    image: minimalcompact/thumbor:latest
+    restart: always
+    volumes:
+      - ./thumbor-data:/data
+    ports:
+      - 8001:80
+    environment:
+      UPLOAD_ENABLED: 1
+      UPLOAD_DELETE_ALLOWED: 1
+volumes:
+  db_data:
+  pgadmin:
+  thumbor-data:
