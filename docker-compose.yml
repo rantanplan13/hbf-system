@@ -1,8 +1,9 @@
 version: '3.6'
 services:
   imageserver:
-    build:
-      context: ../hbf-image
+    image: rantanplan13/hbf-image:latest
+  #  build:
+  #    context: ../hbf-image
     ports:
       - 8083:8082
       - 8000:5005
@@ -20,9 +21,9 @@ services:
       THUMBOR_URL_EXTERNAL: http://localhost:8001
       JAVA_TOOL_OPTIONS: -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
   registration:
-   # image: rantanplan13/hbf-registration:latest
-    build:
-      context: ../hbf-registration
+    image: rantanplan13/hbf-registration:latest
+    #build:
+    #  context: ../hbf-registration
     ports:
       - 8085:9299
       - 8086:5015
@@ -37,15 +38,16 @@ services:
       DATABASE_PASSWORD: postgres
       JAVA_TOOL_OPTIONS: -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5015
   buddy:
-    build:
-      context: ../hbf-hasura
+    image: rantanplan13/hbf-hasura:latest
+    # build:
+     # context: ../hbf-hasura
     depends_on:
       - graphql-engine
     environment:
       HASURA_GRAPHQL_ADMIN_SECRET: "secret"
       HASURA_GRAPHQL_DATABASE: "default"
       DELAY: 10
-      DELAY_FOR_HASURA: 120
+      DELAY_FOR_HASURA: 240
       HASURA_GRAPHQL_CLIENT_URL: "http://graphql-engine:8080"
     links:
       - graphql-engine:graphql-engine
